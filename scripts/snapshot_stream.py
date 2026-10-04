@@ -3,6 +3,9 @@
 runner disk in plaintext (members are built in memory; git mirrors live in RAM, $ARCHIVE_RAMDIR).
 The workflow pipes stdout through zstd | age | split, so only ciphertext is ever written.
 
+Production safety: read-only everywhere; pg_dump only takes ACCESS SHARE locks and gives up after
+30 s instead of queueing behind DDL (--lock-wait-timeout); storage reads 4 at a time, git 2 at a time.
+
 Members: db/full.dump (pg_dump -Fc of the whole DB), db/counts.tsv, buckets/<bucket>/<name> (every
 object of every storage bucket), repos/<org>/<repo>.bundle (every AGENTIC-OBSERVER26-runner-* repo,
 all refs), repos/contestant/<url>.bundle (contestant repos of never-materialized repository
@@ -38,7 +41,7 @@ def psql(q: str) -> str:
 
 
 # ---- database
-dump = sh("pg_dump", PG, "-Fc", "-Z", "0")
+dump = sh("pg_dump", PG, "--lock-wait-timeout=30s", "-Fc", "-Z", "0")
 toc = subprocess.run(["pg_restore", "-l"], input=dump, capture_output=True, check=True).stdout.decode()
 if " TABLE DATA public observer_runs " not in toc:
     sys.exit("dump incomplete")
@@ -74,9 +77,9 @@ def get(r):
 
 
 objs = []
-with cf.ThreadPoolExecutor(8) as ex:
-    for i in range(0, len(rows), 32):
-        for r, body, st in ex.map(get, rows[i:i + 32]):
+with cf.ThreadPoolExecutor(4) as ex:  # gentle on production storage
+    for i in range(0, len(rows), 16):
+        for r, body, st in ex.map(get, rows[i:i + 16]):
             rec = {**r, "status": st}
             if body is not None:
                 add(f"buckets/{r['b']}/{r['n']}", body)
@@ -121,7 +124,7 @@ for org in sh("gh", "api", "user/orgs", "--paginate", "--jq", ".[].login", text=
 repo_recs = []
 auth = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.extraHeader",
         "GIT_CONFIG_VALUE_0": "Authorization: Basic " + __import__("base64").b64encode(f"x-access-token:{TOKEN}".encode()).decode()}
-with cf.ThreadPoolExecutor(4) as ex:
+with cf.ThreadPoolExecutor(2) as ex:
     names = sorted(repos)
     for i in range(0, len(names), 8):
         chunk = names[i:i + 8]

@@ -10,7 +10,7 @@ OUT="$RUNNER_TEMP/full-$STAMP.dump.age"; R="$ARCHIVE_RAMDIR/dump"; mkdir -p "$R"
 args=(); for r in $(echo "$ARCHIVE_AGE_RECIPIENTS" | tr ',' ' '); do args+=(-r "$r"); done
 mkfifo "$R/fifo"
 age "${args[@]}" -o "$OUT" < "$R/fifo" & AGE_PID=$!
-pg_dump "$PGCONN" -Fc -Z 6 -n public -n private -n auth -n storage --exclude-table-data=private.config \
+pg_dump "$PGCONN" --lock-wait-timeout=30s -Fc -Z 6 -n public -n private -n auth -n storage --exclude-table-data=private.config \
   | tee "$R/fifo" | { pg_restore -l > "$R/toc"; cat > /dev/null; }
 wait "$AGE_PID"
 TABLES=$(grep -c ' TABLE DATA ' "$R/toc")

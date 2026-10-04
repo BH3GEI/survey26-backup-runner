@@ -26,3 +26,8 @@ How it stays private (same model as the sealed public runner pool):
 
 Switch: repository variable `BACKUP_ENABLED`. Retention of full snapshots: `RETENTION_ENABLED`
 (off; keep everything until after 2026-10-31).
+
+Production safety (owner rule): strictly read-only against production, never restarts anything.
+`pg_dump` holds only ACCESS SHARE locks (no effect on reads/writes of live runs) and uses
+`--lock-wait-timeout=30s`, so it fails instead of queueing behind a migration and blocking others;
+storage downloads are sequential (incremental) or 4-way (full snapshot); SQL pages are small with pauses.
