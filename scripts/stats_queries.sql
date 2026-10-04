@@ -18,6 +18,7 @@ calls as (select c.run_id, count(*) calls, count(*) filter (where c.actual_token
 eg as (select run_id, sum(connections) conns, sum(refused) refused, sum(bytes_up) up, sum(bytes_down) down,
               string_agg(distinct host,',') ehost from private.observer_run_egress group by 1),
 runs as (select r.id run_id, b.id batch_id, b.team_id, t.name team, ph.slug phase, b.purpose, s.slug card, r.status, r.score,
+                b.revision_id, b.model_disabled,
                 r.created_at, r.started_at, r.finished_at, (r.created_at >= '2026-10-04 09:43:25+00') post_switch,
                 c.calls, c.zero_calls, c.tokens, c.first_call, c.last_call, c.p50_lat, c.phost, c.pmodel,
                 e.conns, e.refused, e.up, e.down, e.ehost,
@@ -95,3 +96,12 @@ select card, llm_real, count(*) runs, count(distinct team_id) teams, round(avg(s
 
 -- ===== Q5 egress coverage after switch =====
 , prev as (select distinct team_id from vend where llm_real and not post_switch) select (team_id in (select team_id from prev)) team_used_llm_before, llm, count(*) runs, count(distinct team_id) teams from vend where post_switch and status='scored' group by 1,2;
+
+-- ===== Q9 with vs without model (本次不提供模型; same team, version and card) =====
+select team, revision_id, card,
+       count(*) filter (where not model_disabled and status='scored') with_model_runs,
+       round(avg(score) filter (where not model_disabled and status='scored')::numeric, 1) with_model_avg,
+       count(*) filter (where model_disabled and status='scored') no_model_runs,
+       round(avg(score) filter (where model_disabled and status='scored')::numeric, 1) no_model_avg
+from vend where purpose='formal' group by 1,2,3
+having count(*) filter (where model_disabled) > 0 order by 1,2,3;
