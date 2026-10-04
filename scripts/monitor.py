@@ -3,7 +3,8 @@
 and on its own cron, in the public runner repo.
 
 Unhealthy when: no successful incremental run in ARCHIVE_MAX_LAG_MIN (45) min; the last 2
-incremental runs failed; newest DB dump > 90 min old; no successful full snapshot in 50 h.
+incremental runs failed; newest DB dump > 90 min old; no successful full snapshot in 50 h;
+no successful stats export in 13 h or its last 2 runs failed.
 -> open/update ONE issue labelled backup-alert in the PRIVATE archive repo, assigned to
 ARCHIVE_ALERT_ASSIGNEES (GitHub notifies them), re-dispatch what is stale, exit 1.
 Healthy -> close that issue. Due (not yet late) snapshots are dispatched quietly, because
@@ -22,6 +23,7 @@ RUNNER = os.environ["GITHUB_REPOSITORY"]
 ALERT_REPO = os.environ.get("ARCHIVE_REPO", "gosimfoundation/survey26-archive")
 MAX_LAG = float(os.environ.get("ARCHIVE_MAX_LAG_MIN") or 45)
 DB_LIMIT, FULL_DUE, FULL_LIMIT = 90.0, 48 * 60 + 5, 50 * 60
+STATS_DUE, STATS_LIMIT = 6 * 60 + 10, 13 * 60
 NOW = datetime.now(timezone.utc)
 
 
@@ -74,7 +76,18 @@ def main() -> None:
     if full_lag > FULL_LIMIT and not full_running:
         problems.append(f"full snapshot: last success {full_lag / 60:.1f} h ago (limit {FULL_LIMIT / 60:.0f} h)")
 
+    stats = runs("stats-export.yml")
+    stats_lag = lag(last_ok(stats))
+    stats_running = any(r["status"] != "completed" for r in stats)
+    stats_done = [r for r in stats if r["status"] == "completed"]
+    if stats_lag > STATS_LIMIT and not stats_running:
+        problems.append(f"stats export: last success {stats_lag / 60:.1f} h ago (limit {STATS_LIMIT / 60:.0f} h)")
+    if len(stats_done) >= 2 and all(r["conclusion"] != "success" for r in stats_done[:2]):
+        problems.append("stats export: last 2 runs did not succeed")
+
     # scheduler backstop (cron is unreliable)
+    if stats_lag > STATS_DUE and not stats_running:
+        gh("workflow", "run", "stats-export.yml", "--repo", RUNNER, check=False)
     if db_lag > 55 and not any(r["status"] != "completed" for r in runs("db-dump.yml")):
         gh("workflow", "run", "db-dump.yml", "--repo", RUNNER, check=False)
     if full_lag > FULL_DUE and not full_running:
@@ -83,7 +96,7 @@ def main() -> None:
         gh("workflow", "run", "incremental.yml", "--repo", RUNNER, check=False)
 
     status = (f"{NOW:%Y-%m-%d %H:%M}Z incremental {inc_lag:.0f} min, DB dump {db_lag:.0f} min, "
-              f"full snapshot {full_lag / 60:.1f} h -- " + ("UNHEALTHY" if problems else "healthy"))
+              f"full snapshot {full_lag / 60:.1f} h, stats export {stats_lag / 60:.1f} h -- " + ("UNHEALTHY" if problems else "healthy"))
     print(status)
     if not os.environ.get("ALERT_TOKEN"):
         sys.exit(1 if problems else 0)

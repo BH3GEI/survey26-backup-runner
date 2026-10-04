@@ -8,6 +8,7 @@ hackathon platform and upload them to two **private** repositories; nothing read
 | `incremental` | self-redispatching relay (~15 min), cron backstop | `gosimfoundation/survey26-archive` (git + releases) |
 | `db-dump` | hourly | `gosimfoundation/survey26-archive` releases `db-YYYYMMDD` |
 | `full-snapshot` | every 2 days | `BH3GEI/survey26-backup` releases `snapshot-<UTC>` |
+| `stats-export` | every 6 h (monitor re-dispatches when stale) | `BH3GEI/survey26-stats` (aggregate LLM-usage CSV/JSON + REPORT.md; not encrypted, private repo) |
 | `monitor` | after every run + cron | alert issue (label `backup-alert`) in the private archive, assigned to the owner |
 
 Why public: GitHub-hosted runners are free for public repositories.

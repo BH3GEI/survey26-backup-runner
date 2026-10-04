@@ -1,0 +1,53 @@
+name: stats-export
+# Every 6 h: export aggregate LLM-usage statistics (private.stats_*) + regenerated REPORT.md
+# to the PRIVATE repo BH3GEI/survey26-stats. All program output is sealed by scripts/sealed.sh;
+# the monitor re-dispatches this workflow when it is stale (GitHub cron is unreliable).
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+concurrency:
+  group: stats-export
+  cancel-in-progress: false
+permissions:
+  contents: read
+  actions: write
+jobs:
+  export:
+    if: ${{ github.repository == 'BH3GEI/survey26-backup-runner' && github.ref == 'refs/heads/main' && vars.BACKUP_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      ARCHIVE_REPO: gosimfoundation/survey26-archive
+      ARCHIVE_ROOT: ${{ github.workspace }}/archive
+      ARCHIVE_RAMDIR: /dev/shm/s26
+      ARCHIVE_AGE_RECIPIENTS: ${{ vars.ARCHIVE_AGE_RECIPIENTS }}
+      ARCHIVE_WRITE_TOKEN: ${{ secrets.ARCHIVE_WRITE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+        with: { path: runner, persist-credentials: false }
+      - uses: actions/checkout@v5
+        with:
+          repository: gosimfoundation/survey26-archive
+          token: ${{ secrets.ARCHIVE_WRITE_TOKEN }}
+          path: archive
+          sparse-checkout: db
+          persist-credentials: false
+      - name: Prepare
+        run: |
+          sudo apt-get update -qq >/dev/null 2>&1
+          sudo apt-get install -y -qq age >/dev/null 2>&1
+          mkdir -m 700 -p /dev/shm/s26
+      - name: Export (sealed)
+        env:
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          GH_TOKEN: ${{ secrets.BACKUP_WRITE_TOKEN }}
+        run: runner/scripts/sealed.sh stats-export python3 runner/scripts/stats_export.py
+      - name: Health check
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALERT_TOKEN: ${{ secrets.ARCHIVE_WRITE_TOKEN }}
+          ARCHIVE_ALERT_ASSIGNEES: ${{ vars.ARCHIVE_ALERT_ASSIGNEES }}
+        run: python3 runner/scripts/monitor.py || true
