@@ -1,0 +1,62 @@
+name: full-snapshot
+# Every 2 days (cron below + monitor backstop): whole DB + every storage object + every runner-org
+# repo + contestant repos, streamed tar | zstd | age | split -> releases of BH3GEI/survey26-backup.
+on:
+  schedule:
+    - cron: "17 3 */2 * *"
+  workflow_dispatch:
+concurrency:
+  group: full-snapshot
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    if: ${{ github.repository == 'BH3GEI/survey26-backup-runner' && github.ref == 'refs/heads/main' && vars.BACKUP_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      SNAPSHOT_REPO: BH3GEI/survey26-backup
+      ARCHIVE_REPO: gosimfoundation/survey26-archive
+      ARCHIVE_RAMDIR: /dev/shm/s26
+      ARCHIVE_AGE_RECIPIENTS: ${{ vars.ARCHIVE_AGE_RECIPIENTS }}
+      ARCHIVE_WRITE_TOKEN: ${{ secrets.ARCHIVE_WRITE_TOKEN }}
+      GH_TOKEN: ${{ secrets.BACKUP_WRITE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+        with: { path: runner, persist-credentials: false }
+      - name: Prepare
+        run: |
+          sudo apt-get update -qq >/dev/null 2>&1
+          sudo apt-get install -y -qq age zstd postgresql-common >/dev/null 2>&1
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y >/dev/null 2>&1
+          sudo apt-get install -y -qq postgresql-client-17 >/dev/null 2>&1
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+          mkdir -m 700 -p /dev/shm/s26
+      - name: Snapshot (sealed)
+        env:
+          PGCONN: host=${{ vars.SUPABASE_DB_HOST }} port=5432 user=postgres.${{ secrets.SUPABASE_PROJECT_REF }} dbname=postgres sslmode=require
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RUNNER_READ_TOKEN: ${{ secrets.RUNNER_READ_TOKEN }}
+        run: runner/scripts/sealed.sh full-snapshot runner/scripts/full_snapshot.sh
+      - name: Retention (disabled unless RETENTION_ENABLED=true; keep all until after 2026-10-31)
+        env:
+          RETENTION_ENABLED: ${{ vars.RETENTION_ENABLED }}
+        run: runner/scripts/sealed.sh retention runner/scripts/retention.sh
+      - name: Alert issue
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          open=$(gh issue list --repo "$SNAPSHOT_REPO" --label snapshot-failed --state open --json number --jq '.[].number')
+          if [ "$JOB_STATUS" = success ]; then
+            for n in $open; do gh issue close "$n" --repo "$SNAPSHOT_REPO" --comment "Recovered: $url" >/dev/null; done
+          elif [ -n "$open" ]; then gh issue comment $(echo $open | cut -d' ' -f1) --repo "$SNAPSHOT_REPO" --body "Failed again: $url" >/dev/null
+          else
+            gh label create snapshot-failed --repo "$SNAPSHOT_REPO" --color B60205 --force >/dev/null 2>&1 || true
+            gh issue create --repo "$SNAPSHOT_REPO" --label snapshot-failed --assignee BH3GEI --title "Full snapshot FAILED"               --body "Run: $url (encrypted log in gosimfoundation/survey26-archive releases runner-logs-*)" >/dev/null
+          fi
+          echo "alert step done ($JOB_STATUS)"

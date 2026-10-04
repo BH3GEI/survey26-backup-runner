@@ -1,0 +1,35 @@
+name: monitor
+# Backstop health check / scheduler (also runs at the end of every incremental and db-dump run).
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+concurrency:
+  group: monitor
+  cancel-in-progress: true
+permissions:
+  contents: read
+  actions: write
+jobs:
+  check:
+    if: ${{ github.repository == 'BH3GEI/survey26-backup-runner' && github.ref == 'refs/heads/main' && vars.BACKUP_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      ARCHIVE_ROOT: ${{ github.workspace }}/archive
+    steps:
+      - uses: actions/checkout@v5
+        with: { path: runner, persist-credentials: false }
+      - uses: actions/checkout@v5
+        with:
+          repository: gosimfoundation/survey26-archive
+          token: ${{ secrets.ARCHIVE_WRITE_TOKEN }}
+          path: archive
+          sparse-checkout: db
+          persist-credentials: false
+      - name: Health check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALERT_TOKEN: ${{ secrets.ARCHIVE_WRITE_TOKEN }}
+          ARCHIVE_ALERT_ASSIGNEES: ${{ vars.ARCHIVE_ALERT_ASSIGNEES }}
+        run: python3 runner/scripts/monitor.py

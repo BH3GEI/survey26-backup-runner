@@ -1,0 +1,65 @@
+name: incremental
+# Incremental encrypted backup relay -> gosimfoundation/survey26-archive (private).
+# PUBLIC repo: no push/pull_request triggers (secrets only on schedule/dispatch from main); all
+# program output is sealed by scripts/sealed.sh; plaintext only ever exists in RAM.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+concurrency:
+  group: incremental
+  cancel-in-progress: false
+permissions:
+  contents: read
+  actions: write
+jobs:
+  backup:
+    if: ${{ github.repository == 'BH3GEI/survey26-backup-runner' && github.ref == 'refs/heads/main' && vars.BACKUP_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ARCHIVE_REPO: gosimfoundation/survey26-archive
+      ARCHIVE_ROOT: ${{ github.workspace }}/archive
+      ARCHIVE_RAMDIR: /dev/shm/s26
+      ARCHIVE_AGE_RECIPIENTS: ${{ vars.ARCHIVE_AGE_RECIPIENTS }}
+      ARCHIVE_WRITE_TOKEN: ${{ secrets.ARCHIVE_WRITE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+        with: { path: runner, persist-credentials: false }
+      - uses: actions/checkout@v5
+        with: { repository: gosimfoundation/survey26-archive, token: "${{ secrets.ARCHIVE_WRITE_TOKEN }}", path: archive }
+      - name: Prepare
+        run: |
+          sudo apt-get update -qq >/dev/null 2>&1
+          sudo apt-get install -y -qq age >/dev/null 2>&1
+          mkdir -m 700 -p /dev/shm/s26
+          git -C archive config user.name survey26-archive-bot
+          git -C archive config user.email actions@users.noreply.github.com
+      - name: Backup (sealed)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          GH_TOKEN: ${{ secrets.RUNNER_READ_TOKEN }}
+        run: runner/scripts/sealed.sh incremental python3 runner/scripts/backup.py
+      - name: Health check
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALERT_TOKEN: ${{ secrets.ARCHIVE_WRITE_TOKEN }}
+          ARCHIVE_ALERT_ASSIGNEES: ${{ vars.ARCHIVE_ALERT_ASSIGNEES }}
+        run: python3 runner/scripts/monitor.py || true
+      - name: Next run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [ "$JOB_STATUS" != success ]; then
+            fails=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/incremental.yml/runs?per_page=6&status=completed" --jq '[.workflow_runs[]|.conclusion]|until(length==0 or .[0]=="success"; .[1:])|length' 2>/dev/null || echo 0)
+            [ "${fails:-0}" -ge 5 ] && { echo "5 consecutive failures: not redispatching (cron + monitor remain)"; exit 0; }
+            sleep 120
+          fi
+          gh workflow run incremental.yml --repo "$GITHUB_REPOSITORY" --ref main >/dev/null && echo dispatched

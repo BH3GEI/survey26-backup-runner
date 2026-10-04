@@ -1,0 +1,55 @@
+name: db-dump
+# Hourly encrypted full logical DB dump -> releases db-YYYYMMDD of the private archive repo.
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+concurrency:
+  group: db-dump
+  cancel-in-progress: false
+permissions:
+  contents: read
+  actions: write
+jobs:
+  dump:
+    if: ${{ github.repository == 'BH3GEI/survey26-backup-runner' && github.ref == 'refs/heads/main' && vars.BACKUP_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      ARCHIVE_REPO: gosimfoundation/survey26-archive
+      ARCHIVE_ROOT: ${{ github.workspace }}/archive
+      ARCHIVE_RAMDIR: /dev/shm/s26
+      ARCHIVE_AGE_RECIPIENTS: ${{ vars.ARCHIVE_AGE_RECIPIENTS }}
+      ARCHIVE_WRITE_TOKEN: ${{ secrets.ARCHIVE_WRITE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+        with: { path: runner, persist-credentials: false }
+      - uses: actions/checkout@v5
+        with:
+          repository: gosimfoundation/survey26-archive
+          token: ${{ secrets.ARCHIVE_WRITE_TOKEN }}
+          path: archive
+          sparse-checkout: db
+      - name: Prepare
+        run: |
+          sudo apt-get update -qq >/dev/null 2>&1
+          sudo apt-get install -y -qq age postgresql-common >/dev/null 2>&1
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y >/dev/null 2>&1
+          sudo apt-get install -y -qq postgresql-client-17 >/dev/null 2>&1
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
+          mkdir -m 700 -p /dev/shm/s26
+          git -C archive config user.name survey26-archive-bot
+          git -C archive config user.email actions@users.noreply.github.com
+      - name: Dump (sealed)
+        env:
+          PGCONN: host=${{ vars.SUPABASE_DB_HOST }} port=5432 user=postgres.${{ secrets.SUPABASE_PROJECT_REF }} dbname=postgres sslmode=require
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          GH_TOKEN: ${{ secrets.ARCHIVE_WRITE_TOKEN }}
+        run: runner/scripts/sealed.sh db-dump runner/scripts/db_dump.sh
+      - name: Health check
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALERT_TOKEN: ${{ secrets.ARCHIVE_WRITE_TOKEN }}
+          ARCHIVE_ALERT_ASSIGNEES: ${{ vars.ARCHIVE_ALERT_ASSIGNEES }}
+        run: python3 runner/scripts/monitor.py || true
