@@ -1,0 +1,9 @@
+name: probe
+on: workflow_dispatch
+permissions: {}
+jobs:
+  p:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - run: echo ok
