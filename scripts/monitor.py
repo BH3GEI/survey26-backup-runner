@@ -21,8 +21,8 @@ from pathlib import Path
 
 RUNNER = os.environ["GITHUB_REPOSITORY"]
 ALERT_REPO = os.environ.get("ARCHIVE_REPO", "gosimfoundation/survey26-archive")
-MAX_LAG = float(os.environ.get("ARCHIVE_MAX_LAG_MIN") or 45)
-DB_LIMIT, FULL_DUE, FULL_LIMIT = 90.0, 48 * 60 + 5, 50 * 60
+MAX_LAG = float(os.environ.get("ARCHIVE_MAX_LAG_MIN") or 270)
+DB_LIMIT, FULL_DUE, FULL_LIMIT = 270.0, 48 * 60 + 5, 50 * 60
 STATS_DUE, STATS_LIMIT = 6 * 60 + 10, 13 * 60
 NOW = datetime.now(timezone.utc)
 
@@ -88,7 +88,7 @@ def main() -> None:
     # scheduler backstop (cron is unreliable)
     if stats_lag > STATS_DUE and not stats_running:
         gh("workflow", "run", "stats-export.yml", "--repo", RUNNER, check=False)
-    if db_lag > 55 and not any(r["status"] != "completed" for r in runs("db-dump.yml")):
+    if db_lag > 250 and not any(r["status"] != "completed" for r in runs("db-dump.yml")):
         gh("workflow", "run", "db-dump.yml", "--repo", RUNNER, check=False)
     if full_lag > FULL_DUE and not full_running:
         gh("workflow", "run", "full-snapshot.yml", "--repo", RUNNER, check=False)
