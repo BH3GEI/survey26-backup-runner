@@ -12,6 +12,10 @@ on:
         description: "Only rebuild MANIFEST.sha256 + release notes of an existing tag"
         type: boolean
         default: false
+      storage_workers:
+        description: "Parallel storage downloads (3 = gentle; use more only when the platform is idle)"
+        required: false
+        default: "3"
       components:
         description: "JSON list of components to (re-)export into the tag"
         required: false
@@ -61,6 +65,7 @@ jobs:
     env:
       TAG: ${{ needs.prepare.outputs.tag }}
       WORK: ${{ github.workspace }}/../work
+      STORAGE_WORKERS: ${{ inputs.storage_workers }}
     steps:
       - uses: actions/checkout@v5
         with: { repository: BH3GEI/survey26-full-export, token: "${{ secrets.RUNNER_READ_TOKEN }}", path: export, persist-credentials: false }
