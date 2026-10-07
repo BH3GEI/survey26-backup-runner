@@ -12,6 +12,10 @@ on:
         description: "Only rebuild MANIFEST.sha256 + release notes of an existing tag"
         type: boolean
         default: false
+      components:
+        description: "JSON list of components to (re-)export into the tag"
+        required: false
+        default: '["db","storage","repos-runners","repos-related","archive-releases"]'
 concurrency:
   group: full-export
   cancel-in-progress: false
@@ -53,7 +57,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [db, storage, repos-runners, repos-related, archive-releases]
+        component: ${{ fromJSON(inputs.components || '["db","storage","repos-runners","repos-related","archive-releases"]') }}
     env:
       TAG: ${{ needs.prepare.outputs.tag }}
       WORK: ${{ github.workspace }}/../work
