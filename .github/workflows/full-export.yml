@@ -17,9 +17,9 @@ on:
         required: false
         default: "3"
       components:
-        description: "JSON list of components to (re-)export into the tag"
+        description: "JSON list of components (also: archive-releases = all 29k archive assets, opt-in, very slow)"
         required: false
-        default: '["db","storage","repos-runners","repos-related","archive-releases"]'
+        default: '["db","storage","repos-runners","repos-related","archive-code"]'
 concurrency:
   group: full-export
   cancel-in-progress: false
@@ -61,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: ${{ fromJSON(inputs.components || '["db","storage","repos-runners","repos-related","archive-releases"]') }}
+        component: ${{ fromJSON(inputs.components || '["db","storage","repos-runners","repos-related","archive-code"]') }}
     env:
       TAG: ${{ needs.prepare.outputs.tag }}
       WORK: ${{ github.workspace }}/../work
