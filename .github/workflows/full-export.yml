@@ -1,0 +1,80 @@
+name: full-export
+# Complete age-encrypted export of the platform -> one Release of the PRIVATE repo BH3GEI/survey26-full-export.
+# Scripts live in that private repo (checked out with a token); ALL program output is age-encrypted and uploaded
+# there as log-<component>.txt.age -- this public log shows one line per step. Read-only against production.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (default: full-<UTC now>)"
+        required: false
+      finalize_only:
+        description: "Only rebuild MANIFEST.sha256 + release notes of an existing tag"
+        type: boolean
+        default: false
+concurrency:
+  group: full-export
+  cancel-in-progress: false
+permissions:
+  contents: read
+env:
+  EXPORT_REPO: BH3GEI/survey26-full-export
+  AGE_RECIPIENT: ${{ vars.ARCHIVE_AGE_RECIPIENTS }}
+  GH_TOKEN: ${{ secrets.BACKUP_WRITE_TOKEN }}
+  GH_READ_TOKEN: ${{ secrets.RUNNER_READ_TOKEN }}
+  PGCONN: host=${{ vars.SUPABASE_DB_HOST }} port=5432 user=postgres.${{ secrets.SUPABASE_PROJECT_REF }} dbname=postgres sslmode=require
+  PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+  SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+  SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+jobs:
+  prepare:
+    if: ${{ github.repository == 'BH3GEI/survey26-backup-runner' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.t.outputs.tag }}
+    steps:
+      - id: t
+        env:
+          IN_TAG: ${{ inputs.tag }}
+        run: |
+          tag=${IN_TAG:-full-$(date -u +%Y-%m-%dT%H%MZ)}
+          [[ "$tag" =~ ^[A-Za-z0-9._:-]+$ ]] || { echo "bad tag"; exit 1; }
+          gh release view "$tag" -R "$EXPORT_REPO" >/dev/null 2>&1 || \
+            gh release create "$tag" -R "$EXPORT_REPO" --title "$tag" --notes "Encrypted full export (in progress)" >/dev/null
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"; echo "release $tag ready"
+
+  export:
+    needs: prepare
+    if: ${{ !inputs.finalize_only }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [db, storage, repos-runners, repos-related, archive-releases]
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      WORK: ${{ github.workspace }}/../work
+    steps:
+      - uses: actions/checkout@v5
+        with: { repository: BH3GEI/survey26-full-export, token: "${{ secrets.RUNNER_READ_TOKEN }}", path: export, persist-credentials: false }
+      - name: Prepare runner
+        run: export/scripts/prepare_runner.sh ${{ matrix.component }}
+      - name: Export ${{ matrix.component }} (sealed log)
+        run: export/scripts/sealed.sh ${{ matrix.component }} export/scripts/run_component.sh ${{ matrix.component }}
+
+  finalize:
+    needs: [prepare, export]
+    if: ${{ always() && needs.prepare.result == 'success' }}
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with: { repository: BH3GEI/survey26-full-export, token: "${{ secrets.RUNNER_READ_TOKEN }}", path: export, persist-credentials: false }
+      - name: Finalize (MANIFEST.sha256 + release notes)
+        run: |
+          sudo apt-get install -y -qq age >/dev/null 2>&1
+          export/scripts/sealed.sh finalize python3 export/scripts/finalize.py
