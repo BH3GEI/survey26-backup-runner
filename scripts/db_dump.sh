@@ -26,16 +26,17 @@ COUNTS=$(psql "$PGCONN" -Atc "select json_build_object('teams',(select count(*) 
 SHA=$(sha256sum "$OUT" | cut -d' ' -f1); BYTES=$(stat -c %s "$OUT")
 gh release view "$TAG" --repo "$ARCHIVE_REPO" >/dev/null 2>&1 || \
   gh release create "$TAG" --repo "$ARCHIVE_REPO" --title "$TAG" --notes "Hourly encrypted full DB dumps (pg_dump -Fc | age). Restore: ops/archive/restore_db.sh"
-for i in 1 2 3 4 5; do gh release upload "$TAG" "$OUT" --repo "$ARCHIVE_REPO" --clobber && break; [ $i = 5 ] && exit 1; sleep 20; done
+HERE=$(cd "$(dirname "$0")" && pwd)
+for i in 1 2 3 4 5; do ASSET=$(python3 "$HERE/put_asset.py" "$ARCHIVE_REPO" "$TAG" "$OUT") && break; [ $i = 5 ] && exit 1; sleep 20; done
 rm -f "$OUT"
 cd "$ARCHIVE_ROOT"; mkdir -p db
-python3 - "$STAMP" "$TAG" "full-$STAMP.dump.age" "$SHA" "$BYTES" "$TABLES" "$COUNTS" <<'PY'
+python3 - "$STAMP" "$TAG" "$ASSET" "$SHA" "$BYTES" "$TABLES" "$COUNTS" <<'PY'
 import json, sys
 stamp, tag, asset, sha, size, tables, counts = sys.argv[1:]
 with open("db/snapshots.jsonl", "a") as f:
     f.write(json.dumps({"ts": stamp, "release_tag": tag, "asset": asset, "sha256": sha, "bytes": int(size),
                         "tables": int(tables), "counts": json.loads(counts)}) + "\n")
 PY
-git add db/snapshots.jsonl; git commit -qm "DB snapshot full-$STAMP.dump.age"
+git add db/snapshots.jsonl; git commit -qm "DB snapshot $ASSET"
 for i in 1 2 3 4 5; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; [ $i = 5 ] && exit 1; sleep 10; done
-echo "snapshot $TAG/full-$STAMP.dump.age $BYTES bytes, $TABLES tables, $COUNTS"
+echo "snapshot $TAG/$ASSET $BYTES bytes, $TABLES tables, $COUNTS"

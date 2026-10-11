@@ -7,6 +7,5 @@ import export as E  # noqa: E402
 os.environ["GH_TOKEN"] = os.environ.get("ARCHIVE_WRITE_TOKEN") or os.environ.get("GH_TOKEN", "")
 p = Path(sys.argv[1])
 tag = E._ensure_release("runner-logs")
-subprocess.run(["gh", "release", "upload", tag, str(p), "--repo", E.RELEASE_REPO, "--clobber"],
-               check=True, capture_output=True, timeout=300)
+E._upload_asset(tag, p, p.name, E.sha256_file(p))  # append-only, verified
 p.unlink(missing_ok=True)

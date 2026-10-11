@@ -1,9 +1,9 @@
 name: full-snapshot
-# Every 2 days (cron below + monitor backstop): whole DB + every storage object + every runner-org
+# Daily (cron below + monitor backstop): whole DB + every storage object + every runner-org
 # repo + contestant repos, streamed tar | zstd | age | split -> releases of BH3GEI/survey26-backup.
 on:
   schedule:
-    - cron: "17 3 */2 * *"
+    - cron: "17 3 * * *"
   workflow_dispatch:
 concurrency:
   group: full-snapshot
@@ -41,9 +41,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           RUNNER_READ_TOKEN: ${{ secrets.RUNNER_READ_TOKEN }}
         run: runner/scripts/sealed.sh full-snapshot runner/scripts/full_snapshot.sh
-      - name: Retention (disabled unless RETENTION_ENABLED=true; keep all until after 2026-10-31)
-        env:
-          RETENTION_ENABLED: ${{ vars.RETENTION_ENABLED }}
+      - name: Retention report (never deletes anything)
         run: runner/scripts/sealed.sh retention runner/scripts/retention.sh
       - name: Alert issue
         if: always()
