@@ -48,7 +48,7 @@ SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=30", "-o", "ServerAli
 FLOOR = float(os.environ.get("MB_FLOOR_GB", "5")) * 1e9
 FIRST_WEEK = os.environ.get("MB_FIRST_WEEK", "2026-W41")   # weekly snapshots from this ISO week on
 MAX_FILES, MAX_BYTES = 120, 6e9
-API_GAP = 3600 / 2000            # <= 2000 signed-URL lookups per hour per run
+API_GAP = 3600 / 3600            # <= 3600 signed-URL lookups per hour; backs off below 1500 left
 RID = uuid.uuid4().hex[:8]
 START = time.time()
 BUDGET = float(os.environ.get("TIME_BUDGET_MIN", "320")) * 60
@@ -371,10 +371,12 @@ def alert_space(pending: list) -> None:
 def main() -> None:
     what = set(sys.argv[1:]) or {"archive", "snapshots"}
     log(f"start run {RID}; MagicBook free {free_bytes() / 1e9:.1f} GB")
-    if "archive" in what:
-        copy_archive()
+    # Snapshots first: ~25 large files need ~25 API calls, while the archive is tens of thousands of
+    # small files whose pace is set by the API budget.
     if "snapshots" in what:
         copy_weekly_snapshots()
+    if "archive" in what:
+        copy_archive()
     SUMMARY.append(f"MagicBook free at end: {free_bytes() / 1e9:.1f} GB")
     status = "\n".join(SUMMARY + [f"PROBLEM: {p}" for p in PROBLEMS])
     log("\n" + status)
