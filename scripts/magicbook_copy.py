@@ -82,7 +82,11 @@ def q(s: str) -> str:
 
 
 def gh(*args: str, repo: str, check: bool = True) -> str:
-    r = subprocess.run(["gh", *args], capture_output=True, text=True, env={**os.environ, "GH_TOKEN": TOKENS[repo]})
+    for attempt in range(6):   # GitHub answers 502/504 now and then on these big releases
+        r = subprocess.run(["gh", *args], capture_output=True, text=True, env={**os.environ, "GH_TOKEN": TOKENS[repo]})
+        if r.returncode == 0 or not any(c in r.stderr for c in ("HTTP 5", "timeout", "EOF", "connection")):
+            break
+        time.sleep(20 * (attempt + 1))
     if check and r.returncode:
         raise RuntimeError(f"gh {args[:3]}: {r.stderr.strip()[:300]}")
     return r.stdout
@@ -93,8 +97,20 @@ def gh_lines(path: str, jq: str, repo: str) -> list[dict]:
     return [json.loads(line) for line in out.splitlines() if line.strip()]
 
 
+def release_tags(repo: str) -> list[str]:
+    """All release tags (GraphQL: the REST list embeds every asset and times out on these releases)."""
+    owner, name = repo.split("/")
+    out = gh("api", "graphql", "--paginate", "-f", "query=query($o:String!,$n:String!,$endCursor:String){repository(owner:$o,name:$n)"
+             "{releases(first:100,after:$endCursor){nodes{tagName} pageInfo{hasNextPage endCursor}}}}",
+             "-f", f"o={owner}", "-f", f"n={name}", "--jq", ".data.repository.releases.nodes[].tagName", repo=repo)
+    return [t for t in out.splitlines() if t.strip()]
+
+
 def release_assets(repo: str, tag: str) -> list[dict]:
-    rid = gh_lines(f"repos/{repo}/releases/tags/{tag}", "{id: .id}", repo)[0]["id"]
+    owner, name = repo.split("/")   # GraphQL: the REST tag lookup embeds up to 1000 assets and times out
+    rid = gh("api", "graphql", "-f", "query=query($o:String!,$n:String!,$t:String!){repository(owner:$o,name:$n)"
+             "{release(tagName:$t){databaseId}}}", "-f", f"o={owner}", "-f", f"n={name}", "-f", f"t={tag}",
+             "--jq", ".data.repository.release.databaseId", repo=repo).strip()
     return gh_lines(f"repos/{repo}/releases/{rid}/assets?per_page=100", ".[] | {id, name, size, digest, state}", repo)
 
 
@@ -242,7 +258,7 @@ def copy_assets(repo: str, rdir: str, assets: list[dict], label: str) -> tuple[i
 # ------------------------------------------------------------------ 1. incremental archive releases
 
 def copy_archive() -> None:
-    tags = [r["tag"] for r in gh_lines(f"repos/{ARCHIVE_REPO}/releases?per_page=100", ".[] | {tag: .tag_name}", ARCHIVE_REPO)]
+    tags = release_tags(ARCHIVE_REPO)
     total_copied = total_missing = 0
     name = ARCHIVE_REPO.split("/")[1]
     for tag in sorted(tags):
@@ -283,8 +299,7 @@ def snapshot_parts(tag: str) -> tuple[list[dict], dict] | None:
 
 
 def copy_weekly_snapshots() -> None:
-    tags = sorted(r["tag"] for r in gh_lines(f"repos/{SNAPSHOT_REPO}/releases?per_page=100", ".[] | {tag: .tag_name}", SNAPSHOT_REPO)
-                  if r["tag"].startswith("snapshot-"))
+    tags = sorted(t for t in release_tags(SNAPSHOT_REPO) if t.startswith("snapshot-"))
     on_mb = set(ps(f"$d = {q(BASE + '/full-snapshot')}; if (Test-Path -LiteralPath $d) {{ Get-ChildItem -LiteralPath $d -Directory -Name }}", 300))
     weeks: dict[str, list[str]] = {}
     for t in tags:
