@@ -3,7 +3,7 @@
 and on its own cron, in the public runner repo.
 
 Unhealthy when: no successful incremental run in ARCHIVE_MAX_LAG_MIN (45) min; the last 2
-incremental runs failed; newest DB dump > 90 min old; no successful full snapshot in 50 h;
+incremental runs failed; newest DB dump > 90 min old; no successful full snapshot in 26 h;
 no successful stats export in 13 h or its last 2 runs failed.
 -> open/update ONE issue labelled backup-alert in the PRIVATE archive repo, assigned to
 ARCHIVE_ALERT_ASSIGNEES (GitHub notifies them), re-dispatch what is stale, exit 1.
@@ -22,7 +22,7 @@ from pathlib import Path
 RUNNER = os.environ["GITHUB_REPOSITORY"]
 ALERT_REPO = os.environ.get("ARCHIVE_REPO", "gosimfoundation/survey26-archive")
 MAX_LAG = float(os.environ.get("ARCHIVE_MAX_LAG_MIN") or 270)
-DB_LIMIT, FULL_DUE, FULL_LIMIT = 270.0, 48 * 60 + 5, 50 * 60
+DB_LIMIT, FULL_DUE, FULL_LIMIT = 270.0, 24 * 60 + 5, 26 * 60
 STATS_DUE, STATS_LIMIT = 6 * 60 + 10, 13 * 60
 NOW = datetime.now(timezone.utc)
 

@@ -160,34 +160,112 @@ class RateLimited(RuntimeError):
     stop the category for this run instead of failing every remaining item."""
 
 
-def release_upload(tag_prefix: str, local_path: Path, asset_name: str) -> dict:
-    """Upload local_path as asset_name to today's release for tag_prefix, delete the local
-    file, and return the manifest entry to record (never committed to git -- the manifest's
-    sha256 + release_tag + asset name are enough to locate and verify it later)."""
-    # GitHub drops non-ASCII characters from asset names on upload (a Chinese team slug became
-    # "__<revision>__code@..."), so store an ASCII-safe name and record exactly that.
-    asset_name = re.sub(r"[^A-Za-z0-9._@+-]", "_", asset_name.encode("ascii", "ignore").decode()) or "asset"
-    tag = _ensure_release(tag_prefix)
-    digest = sha256_file(local_path)
-    upload_path = local_path if local_path.name == asset_name else local_path.with_name(asset_name)
-    if upload_path != local_path:
-        local_path.rename(upload_path)
-    try:
-        r = subprocess.run(
-            ["gh", "release", "upload", tag, str(upload_path), "--repo", RELEASE_REPO, "--clobber"],
-            capture_output=True, timeout=180, env=WRITE_ENV,
-        )
+# A single release asset is capped at 2 GiB ("size must be less than 2147483648"). Anything
+# bigger is uploaded as consecutive raw byte slices of the ciphertext, <stem>.partNNN, exactly
+# like full_snapshot.sh does: restore = concatenate the parts in manifest order, then decrypt.
+PART_BYTES = int(os.environ.get("ARCHIVE_PART_BYTES", str(1900 << 20)))
+
+
+def _assets(tag: str, repo: str | None = None) -> dict[str, dict]:
+    """name -> {size, state, digest} of every asset in tag (all pages)."""
+    r = subprocess.run(
+        ["gh", "api", "--paginate", f"repos/{repo or RELEASE_REPO}/releases/tags/{tag}", "--jq",
+         ".assets[] | {name, size, state, digest}"],
+        capture_output=True, text=True, timeout=120, env=WRITE_ENV,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(f"asset listing failed for {tag}: {r.stderr[:200]}")
+    return {a["name"]: a for a in (json.loads(line) for line in r.stdout.splitlines() if line.strip())}
+
+
+def _matches(asset: dict | None, size: int, digest: str) -> bool:
+    if not asset or asset.get("state") != "uploaded" or asset.get("size") != size:
+        return False
+    return asset.get("digest") in (None, f"sha256:{digest}")
+
+
+def _upload_asset(tag: str, path: Path, name: str, digest: str, repo: str | None = None) -> str:
+    """Upload path to tag as name WITHOUT ever replacing an existing asset (no --clobber: the
+    backup is append-only). If name is already taken by an identical asset (a retried run),
+    adopt it; if it's taken by anything else (e.g. a half-finished earlier upload), use
+    name.r2, name.r3, ... instead. Verifies size and GitHub's sha256 digest after upload.
+    Returns the asset name actually holding the bytes."""
+    repo = repo or RELEASE_REPO
+    size = path.stat().st_size
+    existing = _assets(tag, repo)
+    for attempt in range(1, 20):
+        cand = name if attempt == 1 else f"{name}.r{attempt}"
+        if _matches(existing.get(cand), size, digest):
+            return cand
+        if cand in existing:
+            continue
+        up = path if path.name == cand else path.with_name(cand)
+        if up != path:
+            path.rename(up)
+        try:
+            r = subprocess.run(["gh", "release", "upload", tag, str(up), "--repo", repo],
+                               capture_output=True, timeout=max(180, size // (2 << 20)), env=WRITE_ENV)
+        finally:
+            if up != path:
+                up.rename(path)
         if r.returncode != 0:
             err = r.stderr.decode()[:300]
             if "rate limit" in err.lower():
                 raise RateLimited(err)
             if "file_count limited" in err:
-                _release_counts[tag] = RELEASE_ASSET_CAP  # full after all; next call moves to the next shard
+                _release_counts[tag] = RELEASE_ASSET_CAP
             raise RuntimeError(f"gh release upload failed: {err}")
-        _release_counts[tag] += 1
+        _release_counts[tag] = _release_counts.get(tag, 0) + 1
+        existing = _assets(tag, repo)
+        if not _matches(existing.get(cand), size, digest):
+            raise RuntimeError(f"uploaded {tag}/{cand} does not verify (size/sha256)")
+        return cand
+    raise RuntimeError(f"no free asset name for {tag}/{name}")
+
+
+def release_upload(tag_prefix: str, local_path: Path, asset_name: str) -> dict:
+    """Upload local_path as asset_name to today's release for tag_prefix, delete the local
+    file, and return the manifest entry to record (never committed to git -- the manifest's
+    sha256 + release_tag + asset name are enough to locate and verify it later). Files above
+    PART_BYTES go up as parts; the entry then also lists them ("parts", in order)."""
+    # GitHub drops non-ASCII characters from asset names on upload (a Chinese team slug became
+    # "__<revision>__code@..."), so store an ASCII-safe name and record exactly that.
+    asset_name = re.sub(r"[^A-Za-z0-9._@+-]", "_", asset_name.encode("ascii", "ignore").decode()) or "asset"
+    try:
+        digest = sha256_file(local_path)
+        size = local_path.stat().st_size
+        if size <= PART_BYTES:
+            tag = _ensure_release(tag_prefix)
+            name = _upload_asset(tag, local_path, asset_name, digest)
+            return {"status": "ok", "release_tag": tag, "asset": name, "sha256": digest}
+        # All parts of one file go to the same release shard, so make sure it has room for them.
+        n_parts = -(-size // PART_BYTES)
+        tag = _ensure_release(tag_prefix)
+        if _release_counts[tag] + n_parts > RELEASE_ASSET_CAP:
+            _release_counts[tag] = RELEASE_ASSET_CAP
+            tag = _ensure_release(tag_prefix)
+        parts = []
+        with open(local_path, "rb") as f:
+            for i in range(n_parts):
+                part = local_path.with_name(f"{asset_name}.part{i:03d}")
+                h = hashlib.sha256()
+                with open(part, "wb") as out:
+                    left = PART_BYTES
+                    while left:
+                        chunk = f.read(min(left, 8 << 20))
+                        if not chunk:
+                            break
+                        out.write(chunk); h.update(chunk); left -= len(chunk)
+                try:
+                    pname = _upload_asset(tag, part, part.name, h.hexdigest())
+                finally:
+                    part.unlink(missing_ok=True)
+                parts.append({"asset": pname, "sha256": h.hexdigest(), "bytes": min(PART_BYTES, size - i * PART_BYTES)})
+        print(f"  uploaded {asset_name} ({size} bytes) as {len(parts)} parts to {tag}", flush=True)
+        return {"status": "ok", "release_tag": tag, "asset": asset_name, "sha256": digest, "bytes": size, "parts": parts}
     finally:
-        upload_path.unlink(missing_ok=True)
-    return {"status": "ok", "release_tag": tag, "asset": asset_name, "sha256": digest}
+        # Only our own scratch ciphertext; the release now holds (and verified) the bytes.
+        local_path.unlink(missing_ok=True)
 
 
 def _done_ok(entry) -> bool:

@@ -9,6 +9,6 @@ args=(); for r in $(echo "$ARCHIVE_AGE_RECIPIENTS" | tr ',' ' '); do args+=(-r "
 : > "$RUNNER_TEMP/parts.sha256"
 GH_TOKEN="$RUNNER_READ_TOKEN" python3 "$HERE/snapshot_stream.py" | zstd -q -T0 -6 | age "${args[@]}" | \
   split -b 1900M -d -a 3 --filter="$HERE/upload_part.sh \"\$FILE\"" - "$RUNNER_TEMP/$TAG.tar.zst.age.part"
-gh release upload "$TAG" "$RUNNER_TEMP/parts.sha256" --repo "$SNAPSHOT_REPO" --clobber
+python3 "$HERE/put_asset.py" "$SNAPSHOT_REPO" "$TAG" "$RUNNER_TEMP/parts.sha256" >/dev/null
 gh release edit "$TAG" --repo "$SNAPSHOT_REPO" --notes "Encrypted full snapshot. Summary: $(cat "$SNAPSHOT_SUMMARY")"
 echo "uploaded $TAG: $(wc -l < "$RUNNER_TEMP/parts.sha256") part(s) $(cat "$SNAPSHOT_SUMMARY")"

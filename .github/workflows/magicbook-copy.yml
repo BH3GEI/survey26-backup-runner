@@ -1,0 +1,48 @@
+name: magicbook-copy
+# Daily, after the full snapshot: copy every incremental archive release and one full snapshot per
+# ISO week onto MagicBook (scripts/magicbook_copy.py). Append-only: never deletes or overwrites.
+# Red run = something needs attention (e.g. a weekly snapshot PENDING for lack of MagicBook space,
+# which also opens/updates the "MagicBook 空间不足" issue in BH3GEI/survey26-backup).
+# PUBLIC repo: no push/pull_request triggers; program output is sealed by scripts/sealed.sh, the job
+# summary carries only tags, counts and GB.
+on:
+  schedule:
+    - cron: "40 6 * * *"
+    - cron: "40 18 * * *"
+  workflow_dispatch:
+concurrency:
+  group: magicbook-copy
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  copy:
+    if: ${{ github.repository == 'BH3GEI/survey26-backup-runner' && github.ref == 'refs/heads/main' && vars.BACKUP_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    env:
+      ARCHIVE_REPO: gosimfoundation/survey26-archive
+      SNAPSHOT_REPO: BH3GEI/survey26-backup
+      ARCHIVE_AGE_RECIPIENTS: ${{ vars.ARCHIVE_AGE_RECIPIENTS }}
+      ARCHIVE_WRITE_TOKEN: ${{ secrets.ARCHIVE_WRITE_TOKEN }}
+      ARCHIVE_TOKEN: ${{ secrets.ARCHIVE_WRITE_TOKEN }}
+      SNAPSHOT_TOKEN: ${{ secrets.BACKUP_WRITE_TOKEN }}
+      MB_SSH: magicbook
+      TIME_BUDGET_MIN: "320"
+    steps:
+      - uses: actions/checkout@v5
+        with: { path: runner, persist-credentials: false }
+      - name: Prepare
+        env:
+          KEY: ${{ secrets.MAGICBOOK_SSH_KEY }}
+          KNOWN: ${{ secrets.MAGICBOOK_KNOWN_HOSTS }}
+          CONF: ${{ secrets.MAGICBOOK_SSH_CONFIG }}
+        run: |
+          sudo apt-get update -qq >/dev/null 2>&1
+          sudo apt-get install -y -qq age >/dev/null 2>&1
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/magicbook_key && chmod 600 ~/.ssh/magicbook_key
+          printf '%s\n' "$KNOWN" > ~/.ssh/known_hosts
+          printf '%s\n' "$CONF" > ~/.ssh/config && chmod 600 ~/.ssh/config
+      - name: Copy (sealed)
+        run: runner/scripts/sealed.sh magicbook-copy python3 runner/scripts/magicbook_copy.py
