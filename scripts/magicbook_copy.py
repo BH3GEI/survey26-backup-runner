@@ -333,8 +333,10 @@ def copy_weekly_snapshots() -> None:
             pending.append((wk, tag, need, free, len(parts)))
             continue
         c, m, stopped = copy_assets(SNAPSHOT_REPO, rdir, parts + [man], f"snapshot {tag}")
-        if m or stopped:
+        if stopped:   # ran out of space part-way: same as not fitting
             pending.append((wk, tag, need, free_bytes(), len(parts)))
+        elif m:       # time budget or failed downloads: not a space problem, but never silently green
+            PROBLEMS.append(f"snapshot {wk}: {tag} copy in progress ({c} new file(s), {m} still missing) -- continues next run")
         else:
             SUMMARY.append(f"snapshot {wk}: {tag} copied ({c} new file(s)), complete on MagicBook")
     for wk, tag, need, free, n in pending:
