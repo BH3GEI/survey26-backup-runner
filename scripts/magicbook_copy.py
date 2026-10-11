@@ -344,7 +344,7 @@ def copy_weekly_snapshots() -> None:
 
 
 def alert_space(pending: list) -> None:
-    title = "MagicBook 空间不足"
+    title = os.environ.get("MB_ALERT_TITLE", "MagicBook 空间不足")
     open_ = json.loads(gh("issue", "list", "--repo", ALERT_REPO, "--state", "open", "--search", f'in:title "{title}"',
                           "--json", "number,title", repo=SNAPSHOT_REPO) or "[]")
     open_ = [i for i in open_ if i["title"] == title]
