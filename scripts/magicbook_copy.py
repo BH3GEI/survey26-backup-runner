@@ -48,7 +48,7 @@ SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=30", "-o", "ServerAli
 FLOOR = float(os.environ.get("MB_FLOOR_GB", "5")) * 1e9
 FIRST_WEEK = os.environ.get("MB_FIRST_WEEK", "2026-W41")   # weekly snapshots from this ISO week on
 MAX_FILES, MAX_BYTES = 120, 6e9
-API_GAP = 3600 / 3600            # <= 3600 signed-URL lookups per hour; backs off below 1500 left
+API_GAP = 3600 / 1500            # <= 1500 signed-URL lookups per hour; backs off below 2500 left (the token is shared with site ops, patrol and other jobs)
 RID = uuid.uuid4().hex[:8]
 START = time.time()
 BUDGET = float(os.environ.get("TIME_BUDGET_MIN", "320")) * 60
@@ -129,7 +129,7 @@ def signed_url(repo: str, asset_id: int) -> str | None:
             r = c.getresponse()
             loc, left, reset = r.getheader("Location"), r.getheader("X-RateLimit-Remaining"), r.getheader("X-RateLimit-Reset")
             c.close()
-            if left is not None and int(left) < 1500:   # leave the shared token's budget to the backups
+            if left is not None and int(left) < 2500:   # leave the shared token's budget to the backups
                 wait = max(60, int(reset or 0) - time.time() + 30)
                 if time.time() + wait - START > BUDGET:
                     return None
