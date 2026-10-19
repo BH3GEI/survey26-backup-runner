@@ -42,7 +42,7 @@ ARCHIVE_REPO = os.environ.get("ARCHIVE_REPO", "gosimfoundation/survey26-archive"
 SNAPSHOT_REPO = os.environ.get("SNAPSHOT_REPO", "BH3GEI/survey26-backup")
 ALERT_REPO = os.environ.get("ALERT_REPO", SNAPSHOT_REPO)
 TOKENS = {ARCHIVE_REPO: os.environ.get("ARCHIVE_TOKEN", ""), SNAPSHOT_REPO: os.environ.get("SNAPSHOT_TOKEN", "")}
-BASE = os.environ.get("MB_BASE", "C:/Users/yao/survey26-backup-20261010")
+BASE = os.environ.get("MB_BASE", "C:/Users/yao/Desktop/survey26-backups/survey26-backup-20261010")
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=30", "-o", "ServerAliveInterval=30",
        os.environ.get("MB_SSH", "magicbook")]
 FLOOR = float(os.environ.get("MB_FLOOR_GB", "5")) * 1e9
